@@ -199,7 +199,7 @@
    Si se dejan vacíos, la app funciona en "modo prueba"
    guardando los datos solo en este navegador.          */
 const APP_ID    = "grupo1";                  // identificador interno de esta app (grupo1 / grupo2)
-const APP_VERSION = "1.0.0";                // se sube un número cada vez que se publica un cambio
+const APP_VERSION = "1.0.1";                // se sube un número cada vez que se publica un cambio
 const APP_TITLE = "Sábados Pitamo";          // título que se ve arriba
 const TIPOS     = ["amigos"];                // (torneo oculto de momento; para activarlo: ["amigos","torneo"]) tipos que usa este grupo: ["amigos","torneo"] o solo ["torneo"]
 const SUPABASE_URL = "https://fzyaqqscgjclauraurrb.supabase.co";
@@ -838,10 +838,11 @@ async function sendToWhatsApp(getEv, after = () => {}, closeLabel = "Cerrar") {
       if (navigator.canShare({ files: [file] })) {
         // En Android la promesa de share() puede no resolverse al volver de WhatsApp:
         // se vuelve a la pantalla principal en cuanto se abre el menú Compartir.
+        // Se espera a que termine el menú Compartir antes de «salir»: si se cerrara la pestaña a la vez,
+        // el menú desaparecería y Android devolvería a la última app abierta.
         try {
-          const shared = navigator.share({ files: [file], text: (ev.type === "torneo" ? "Apúntate o confirma aquí: " : "Apúntate aquí: ") + eventUrl(ev.id) });
-          after();
-          await shared; return;
+          await navigator.share({ files: [file], text: (ev.type === "torneo" ? "Apúntate o confirma aquí: " : "Apúntate aquí: ") + eventUrl(ev.id) });
+          after(); return;
         } catch (e) { if (e.name === "AbortError") return; }
       }
       showImage(blob, after, closeLabel); return;
@@ -856,15 +857,15 @@ async function sendToWhatsApp(getEv, after = () => {}, closeLabel = "Cerrar") {
   } catch (e) { console.error(e); toast("No se pudo crear la imagen: " + e.message); }
 }
 // Copiar para WhatsApp y salir (botón del final y botón «Salir» de arriba)
-const finish = ev => sendToWhatsApp(() => ev, exitApp, "Hecho, salir");
+const finish = ev => sendToWhatsApp(() => ev, () => exitApp(false), "Hecho, salir");
 
 
 /* ---------- Navegación y refresco ---------- */
 // Salir: el navegador solo deja cerrar la pestaña si la abrió la propia app;
 // si no puede, se muestra una pantalla de despedida.
-function exitApp() {
+function exitApp(closeTab = true) {   // closeTab=false tras compartir: no se cierra la pestaña para no volver a otra app
   try { history.replaceState(null, "", location.pathname + location.search + "#/"); } catch (e) {}
-  try { window.close(); } catch (e) {}
+  if (closeTab) { try { window.close(); } catch (e) {} }
   setTimeout(() => {
     $app.innerHTML = `
       <div class="card" style="text-align:center;margin-top:40px">
