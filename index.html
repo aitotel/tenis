@@ -199,7 +199,7 @@
    Si se dejan vacíos, la app funciona en "modo prueba"
    guardando los datos solo en este navegador.          */
 const APP_ID    = "grupo1";                  // identificador interno de esta app (grupo1 / grupo2)
-const APP_VERSION = "1.0.1";                // se sube un número cada vez que se publica un cambio
+const APP_VERSION = "1.0.3";                // se sube un número cada vez que se publica un cambio
 const APP_TITLE = "Sábados Pitamo";          // título que se ve arriba
 const TIPOS     = ["amigos"];                // (torneo oculto de momento; para activarlo: ["amigos","torneo"]) tipos que usa este grupo: ["amigos","torneo"] o solo ["torneo"]
 const SUPABASE_URL = "https://fzyaqqscgjclauraurrb.supabase.co";
@@ -221,6 +221,15 @@ const DAY = 86400000;
 const daysTo = d => Math.round((new Date(d + "T12:00:00") - new Date(today() + "T12:00:00")) / DAY);
 const minusDays = (d, n) => new Date(new Date(d + "T12:00:00") - n * DAY).toISOString().slice(0, 10);
 const CONFIRM_DAYS = 7; // la confirmación se abre una semana antes
+// Pistas ordenadas por número de pista y, dentro de cada una, por hora (la misma pista puede aparecer en varios turnos)
+const sortCourts = list => (list || []).slice().sort((a, b) =>
+  String(a.name).localeCompare(String(b.name), "es", { numeric: true })
+  || String(a.start_time || "").localeCompare(String(b.start_time || ""))
+  || String(a.end_time || "").localeCompare(String(b.end_time || "")));
+// Las pistas del club van del 1 al 14: devuelve el número como texto, o null si no es válido
+const MAX_COURT = 14;
+const parseCourtNo = v => { const s = String(v ?? "").trim(); return /^\d{1,2}$/.test(s) && +s >= 1 && +s <= MAX_COURT ? String(+s) : null; };
+const COURT_MSG = "La pista tiene que ser un número del 1 al " + MAX_COURT + ".";
 const courtName = n => /^\d+$/.test(String(n).trim()) ? "Pista " + String(n).trim() : n;
 const hasLunch = ev => ev.type === "torneo";   // la comida llegará en la fase 2, con los torneos
 const confirmOpen = ev => ev.type === "torneo" && daysTo(ev.date) <= CONFIRM_DAYS;
@@ -370,7 +379,7 @@ async function describe(kind, t, row, patch) {
 }
 const store = {
   listEvents: () => rawStore.listEvents(),
-  getEvent: id => rawStore.getEvent(id),
+  async getEvent(id) { const ev = await rawStore.getEvent(id); if (ev) ev.courts = sortCourts(ev.courts); return ev; },
   async insert(t, row) { const r = await rawStore.insert(t, row); describe("insert", t, r).then(m => m && logMove(m)); return r; },
   async update(t, id, patch) {
     const before = await getRow(t, id).catch(() => null);
@@ -564,7 +573,7 @@ function eventForm(ev) {
       <div class="ghead" style="font-weight:600;margin-bottom:6px">🎾 Primera pista reservada (obligatoria en Sábados Pitamo)</div>
       <div class="cgrid ghead" style="grid-template-columns:minmax(0,.7fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.3fr)"><span>Pista</span><span>Hora inicio</span><span>Hora fin</span><span>Reservado por</span></div>
       <div class="cgrid" style="grid-template-columns:minmax(0,.7fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.3fr)">
-        <input name="c_name" placeholder="Nº" aria-label="Pista">
+        <input name="c_name" placeholder="Nº" inputmode="numeric" maxlength="2" aria-label="Pista (1 a 14)">
         <input name="c_start" inputmode="numeric" autocomplete="off" placeholder="hh:mm" data-time aria-label="Hora inicio">
         <input name="c_end" inputmode="numeric" autocomplete="off" placeholder="hh:mm" data-time aria-label="Hora fin">
         <input name="c_by" placeholder="Nombre" aria-label="Reservado por">
@@ -601,6 +610,7 @@ function bindEventForm(ev) {
     if (fc && f.type.value === "amigos" && f.c_end.value <= f.c_start.value) {
       toast("La hora fin de la pista tiene que ser posterior a la de inicio."); f.c_end.focus(); return;
     }
+    if (fc && f.type.value === "amigos" && !parseCourtNo(f.c_name.value)) { toast(COURT_MSG); f.c_name.focus(); return; }
     const row = { type: f.type.value, date: f.date.value,
       restaurant: f.restaurant.value.trim() || null, address: f.address.value.trim() || null,
       meal_time: f.meal_time.value || null };
@@ -609,7 +619,7 @@ function bindEventForm(ev) {
       else {
         const r = await store.insert("events", row);
         if (fc && row.type === "amigos")
-          await store.insert("courts", { event_id: r.id, name: f.c_name.value.trim(), start_time: f.c_start.value, end_time: f.c_end.value, booked_by: f.c_by.value.trim() });
+          await store.insert("courts", { event_id: r.id, name: parseCourtNo(f.c_name.value), start_time: f.c_start.value, end_time: f.c_end.value, booked_by: f.c_by.value.trim() });
         showNewForm = false; location.hash = "#/e/" + r.id;
       }
     });
@@ -659,14 +669,14 @@ async function renderEvent(id) {
       <h2>🎾 Pistas reservadas: ${ev.courts.length} - ${ev.courts.length * PLAYERS_PER_COURT} plazas</h2>
       <div class="cgrid ghead"><span>🎾 Pista</span><span>🕙 Inicio</span><span>🕛 Fin</span><span>👤 Reservó</span><span></span></div>
       ${ev.courts.map(c => `<div class="cgrid lrow" data-crow="${c.id}">
-          <input name="name" value="${esc(c.name)}" required aria-label="Pista" style="font-weight:700">
+          <input name="name" value="${esc(c.name)}" required inputmode="numeric" maxlength="2" aria-label="Pista (1 a 14)" style="font-weight:700">
           <input name="start" value="${esc(c.start_time || "")}" required inputmode="numeric" autocomplete="off" data-time aria-label="Hora inicio">
           <input name="end" value="${esc(c.end_time || "")}" required inputmode="numeric" autocomplete="off" data-time aria-label="Hora fin">
           <input name="by" value="${esc(c.booked_by || "")}" required aria-label="Reservado por">
           <button class="small danger" data-delcourt="${c.id}" title="Quitar pista" aria-label="Quitar pista">🗑️</button>
         </div>`).join("") || `<div class="muted" style="padding:8px 0">Aún no hay pistas.</div>`}
       <form id="courtform" class="cgrid" style="margin-top:10px">
-        <input name="name" placeholder="Nº" required aria-label="Pista">
+        <input name="name" placeholder="Nº" required inputmode="numeric" maxlength="2" aria-label="Pista (1 a 14)">
         <input name="start" required inputmode="numeric" autocomplete="off" placeholder="hh:mm" data-time aria-label="Hora inicio">
         <input name="end" required inputmode="numeric" autocomplete="off" placeholder="hh:mm" data-time aria-label="Hora fin">
         <input name="by" placeholder="Nombre" required aria-label="Reservado por">
@@ -738,16 +748,20 @@ function bindEvent(ev) {
   document.getElementById("courtform").onsubmit = e => {
     e.preventDefault(); const f = e.target;
     if (!fixTimes(f)) return;
+    const no = parseCourtNo(f.name.value);
+    if (!no) { toast(COURT_MSG); f.name.focus(); return; }
     if (f.end.value <= f.start.value) { toast("La hora fin tiene que ser posterior a la de inicio."); f.end.focus(); return; }
-    act(() => store.insert("courts", { event_id: ev.id, name: f.name.value.trim(), start_time: f.start.value, end_time: f.end.value, booked_by: f.by.value.trim() }));
+    act(() => store.insert("courts", { event_id: ev.id, name: no, start_time: f.start.value, end_time: f.end.value, booked_by: f.by.value.trim() }));
   };
   // Pistas editables en su propia fila: se guarda al salir del campo
   document.querySelectorAll("[data-crow]").forEach(row => row.addEventListener("change", () => {
     const v = n => row.querySelector(`[name=${n}]`).value.trim();
     const t0 = normTime(v("start")), t1 = normTime(v("end"));
     if (!v("name") || !v("by") || !t0 || !t1) { toast("Todos los campos de la pista son obligatorios y las horas tienen que ser válidas."); render(); return; }
+    const no = parseCourtNo(v("name"));
+    if (!no) { toast(COURT_MSG); render(); return; }
     if (t1 <= t0) { toast("La hora fin tiene que ser posterior a la de inicio."); render(); return; }
-    act(() => store.update("courts", row.dataset.crow, { name: v("name"), start_time: t0, end_time: t1, booked_by: v("by") }));
+    act(() => store.update("courts", row.dataset.crow, { name: no, start_time: t0, end_time: t1, booked_by: v("by") }));
   }));
   on("[data-delcourt]", el => {
     if (ev.type === "amigos" && ev.courts.length <= 1) { toast("En Sábados Pitamo tiene que quedar al menos una pista. Añade otra antes de quitar esta."); return; }
